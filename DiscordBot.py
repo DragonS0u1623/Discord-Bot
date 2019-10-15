@@ -5,20 +5,45 @@ import shutil
 import discord
 from discord.utils import get
 import youtube_dl
-
+from pymongo import MongoClient
 from discord.ext import commands
 
-#TODO:Youtube search 
+global client
+client = MongoClient("mongodb+srv://DiscordBot:game7Sgame7Sga@discord-y3bzo.mongodb.net/test?retryWrites=true&w=majority")
+db = client["bot"]
+server_coll = db["serversettings"]
+queue_coll = db["queues"]
+
 #TODO: Mongodb queues 
-#TODO: Multi server compatibility with mongodb
 
-PREFIX = '.'
+def get_prefix(bot, message):
+    if not message.guild:
+        return commands.when_mentioned_or("?")(bot, message)
+    prefix = "?"
+    for x in server_coll.find({"guildid": message.guild.id}, {"_id": 0}):
+        prefix = x["prefix"]
+        return commands.when_mentioned_or(prefix)(bot, message)
 
-client = commands.Bot(command_prefix=PREFIX)
+bot = commands.Bot(command_prefix=get_prefix, case_insensitive=True)
+bot.remove_command("help")
 
-client.remove_command("help")
+@bot.event
+async def on_ready():
+    print('We have logged in as {0.user}'.format(bot))
 
-@client.command()
+@bot.event
+async def on_guild_join(guild):
+    post = {"guildid": guild.id, "money": 0, "voice channel": 0, "prefix": "?"}
+    server_coll.insert_one(post)
+    print("Created document for " + guild.name + ": " + str(guild.id))
+
+@bot.event
+async def on_guild_remove(guild):
+    post = {"guildid": guild.id}
+    server_coll.delete_one(post)
+    print("Deleted document for " + guild.name + ": " + str(guild.id))
+
+@bot.command()
 async def help(ctx):
     author = ctx.message.author
     
@@ -35,26 +60,23 @@ async def help(ctx):
     
     await author.send(embed=embed)
 
-@client.event 
-async def on_ready():
-    print('We have logged in as {0.user}'.format(client))
-
-@client.command()
+@bot.command()
 async def prefix(ctx, message):
-    PREFIX = message
-    print('Prefix changed to ' + PREFIX + ' for ' + ctx.author.server)
-    await ctx.send('Prefix changed to ' + PREFIX)
+    mq = {'guildid': ctx.guild.id}
+    change = {'$set': {'prefix': message}}
+    server_coll.update_one(mq, change)
+    print('Prefix changed to ' + message + ' for ' + ctx.guild.name + ': ' + str(ctx.guild.id))
+    await ctx.send('Prefix changed to ' + message)
 
-@client.command()
+@bot.command()
 async def ping(ctx):
-    print(f'Pong! {round(client.latency * 1000)}ms')
-    await ctx.send(f'Pong! {round(client.latency * 1000)}ms')
+    await ctx.send(f'Pong! {round(bot.latency * 1000)}ms')
     
-@client.command(aliases=['j'])
+@bot.command(aliases=['j'])
 async def join(ctx):
     global voice
     channel = ctx.author.voice.channel
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     
     if voice and voice.is_connected():
         await voice.move_to(channel)
@@ -64,10 +86,10 @@ async def join(ctx):
     
     await ctx.send(f'Connected to {channel}')
 
-@client.command(aliases=['l'])
+@bot.command(aliases=['l'])
 async def leave(ctx):
     channel = ctx.author.voice.channel
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     
     if voice and voice.is_connected():
         await voice.disconnect()
@@ -77,7 +99,7 @@ async def leave(ctx):
         await ctx.send("Don't think I can do that chief. Doesn't look like I'm in a voice channel.")
 
 
-@client.command(aliases=['p'])
+@bot.command(aliases=['p'])
 async def play(ctx, url: str):
     
     def check_queue():
@@ -137,7 +159,7 @@ async def play(ctx, url: str):
     
     await ctx.send("Getting everything ready now")
 
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     if voice and voice.is_connected():
         await voice.move_to(channel)
     else:
@@ -146,6 +168,8 @@ async def play(ctx, url: str):
     
     ydl_opts = {
         'format': 'bestaudio/best',
+        'noplaylist': '',
+        'default_search': 'ytsearch',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -160,7 +184,7 @@ async def play(ctx, url: str):
     except:
         print("FALLBACK: Youtube-dl does not support this URL, using Spotify (This is normal if Spotify URL)")
         c_path = os.path.dirname(os.path.realpath(__file__))
-        system("spotdl -f " + '"' + c_path + '"' + " -s " + url)
+        system("spotdl -f " + '"' + c_path + '" -nf ' + " -s " + url)
 
     for file in os.listdir("./"):
         if file.endswith(".mp3"):
@@ -181,9 +205,9 @@ async def play(ctx, url: str):
         
     print("playing\n")
     
-@client.command(aliases=[])
+@bot.command(aliases=[])
 async def pause(ctx):
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     
     if voice and voice.is_playing():
         print("Music paused")
@@ -193,9 +217,9 @@ async def pause(ctx):
         print("Nothing is playing chief")
         await ctx.send("Nothing is playing chief")
     
-@client.command(aliases=['r'])
+@bot.command(aliases=['r'])
 async def resume(ctx):
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     
     if voice and voice.is_paused():
         print("Music resumed")
@@ -207,9 +231,9 @@ async def resume(ctx):
         
 que = {}
     
-@client.command(aliases=['s'])
+@bot.command(aliases=['s'])
 async def stop(ctx):
-    voice = get(client.voice_clients, guild=ctx.guild)
+    voice = get(bot.voice_clients, guild=ctx.guild)
     que.clear()
     
     queue_infile = os.path.isdir("./Queue")
@@ -220,7 +244,7 @@ async def stop(ctx):
     voice.stop()
     await ctx.send("Music stopped")
 
-@client.command(aliases=['q'])
+@bot.command(aliases=['q'])
 async def queue(ctx, url: str):
     queue_infile = os.path.isdir("./Queue")
     if queue_infile is False:
@@ -258,10 +282,10 @@ async def queue(ctx, url: str):
         system(f'spotdl -ff song{q_num} -f ' + '"' + q_path + '"' + ' -s ' + url)
         print("Song added to queue")
 
-@client.command(aliases=['n', 'next'])
+@bot.command(aliases=['n', 'next'])
 async def _next(ctx):
     print("Playing next song")
     voice.stop()
     await ctx.send("Playing next song")
 
-client.run('NjI5NDk0MTI2NzQzNjUwMzM2.XZlMiw.ITh_9N1nqTwrA99Tpf0---GWnQA')
+bot.run('NjI5NDk0MTI2NzQzNjUwMzM2.XZ3-jg.Hp0zVliT23yYd8NfDWIMT830rZI')
