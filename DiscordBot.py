@@ -9,7 +9,7 @@ from pymongo import MongoClient
 from discord.ext import commands
 
 global client
-client = MongoClient("mongodb+srv://DiscordBot:game7Sgame7Sga@discord-y3bzo.mongodb.net/test?retryWrites=true&w=majority")
+client = MongoClient("mongodb+srv://<username>:<password>ga@discord-y3bzo.mongodb.net/test?retryWrites=true&w=majority")
 db = client["bot"]
 server_coll = db["serversettings"]
 queue_coll = db["queues"]
@@ -288,4 +288,4 @@ async def _next(ctx):
     voice.stop()
     await ctx.send("Playing next song")
 
-bot.run('NjI5NDk0MTI2NzQzNjUwMzM2.XZ3-jg.Hp0zVliT23yYd8NfDWIMT830rZI')
+bot.run(TOKEN)
