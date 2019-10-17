@@ -4,12 +4,17 @@ import shutil
 
 import discord
 from discord.utils import get
-import youtube_dl
 from pymongo import MongoClient
+import youtube_dl
+
 from discord.ext import commands
 
+
+TOKEN
+
 global client
-client = MongoClient("mongodb+srv://<username>:<password>ga@discord-y3bzo.mongodb.net/test?retryWrites=true&w=majority")
+global voice
+client = MongoClient("mongodb+srv://<username>:<password>@discord-y3bzo.mongodb.net/test?retryWrites=true&w=majority")
 db = client["bot"]
 server_coll = db["serversettings"]
 queue_coll = db["queues"]
@@ -43,6 +48,16 @@ async def on_guild_remove(guild):
     server_coll.delete_one(post)
     print("Deleted document for " + guild.name + ": " + str(guild.id))
 
+@bot.event
+async def on_member_join(member):
+    embed = discord.Embed(colour=discord.Colour.orange(), title=f"Member joined: {member}", description="Joined the server.")
+    await auditChannel.send(embed)
+
+@bot.event 
+async def on_member_remove(member):
+    embed = discord.Embed(colour=discord.Colour.orange(), title=f"Member left: {member}", description="Left the server.")
+    await auditChannel.send(embed)
+
 @bot.command()
 async def help(ctx):
     author = ctx.message.author
@@ -72,9 +87,83 @@ async def prefix(ctx, message):
 async def ping(ctx):
     await ctx.send(f'Pong! {round(bot.latency * 1000)}ms')
     
+@bot.command()
+async def clear(ctx, amount=25):
+    manageChannels = False
+    for role in ctx.author.roles:
+        if role.permissions.manage_channels:
+            manageChannels = True
+            break
+    if manageChannels:
+        await ctx.channel.purge(limit=amount+1)
+        print(f'Cleared {amount} messages from {ctx.channel}')
+    else:
+        await ctx.send("You don't have permission to use this command.")
+
+@bot.command()
+async def channel(ctx, channel : discord.TextChannel):
+    admin = False
+    for role in ctx.author.roles:
+        if role.permissions.administrator:
+            admin = True
+            break
+    if admin:
+        global auditChannel 
+        auditChannel = channel
+        await ctx.send(f"Audit log data will be sent to {auditChannel}")
+    else:
+        await ctx.send("You don't have permission to use this command.")
+
+@bot.command()
+async def kick(ctx, member : discord.Member, *, reason=None):
+    canKick = False
+    for role in ctx.author.roles:
+        if role.permissions.kick_members:
+            canKick = True
+            break
+    if canKick:
+        embed = discord.Embed(colour=discord.Colour.orange(), title=f"Member Kicked: {member}", description="Removed from the server.")
+        embed.add_field(name="Reason: " + reason, inline=False)
+        embed.add_field(name=f"Responsible operator: {ctx.author.mention}", inline=False)
+        await member.kick(reason=reason)
+        await auditChannel.send(embed)
+    else:
+        await ctx.send("You don't have permission to use this command.")
+
+@bot.command()
+async def ban(ctx, member : discord.Member, *, reason=None):
+    canBan = False
+    for role in ctx.author.roles:
+        if role.permissions.ban_members:
+            canBan = True
+            break
+    if canBan:
+        embed = discord.Embed(colour=discord.Colour.orange(), title=f"Member banned: {member}", description="Banned from the server.")
+        embed.add_field(name="Reason: " + reason, inline=False)
+        embed.add_field(name=f"Responsible operator: {ctx.author.mention}", inline=False)
+        await member.ban(reason=reason)
+        await auditChannel.send(embed)
+    else:
+        await ctx.send("You don't have permission to use this command.")
+
+@bot.command()
+async def unban(ctx, member : discord.Member, *, reason=None):
+    canBan = False
+    for role in ctx.author.roles:
+        if role.permissions.ban_members:
+            canBan = True
+            break
+    if canBan:
+        embed = discord.Embed(colour=discord.Colour.orange(), title=f"Member unbanned: {member}", description="Unbanned from the server.")
+        embed.add_field(name="Reason: " + reason, inline=False)
+        embed.add_field(name=f"Responsible operator: {ctx.author.mention}", inline=False)
+        await member.unban(reason=reason)
+        await auditChannel.send(embed)
+    else:
+        await ctx.send("You don't have permission to use this command.")
+
 @bot.command(aliases=['j'])
 async def join(ctx):
-    global voice
     channel = ctx.author.voice.channel
     voice = get(bot.voice_clients, guild=ctx.guild)
     
@@ -83,8 +172,7 @@ async def join(ctx):
     else:
         voice = await channel.connect()
         print(f'The bot has connnected to {channel}\n')
-    
-    await ctx.send(f'Connected to {channel}')
+        await ctx.send(f'Connected to {channel}')
 
 @bot.command(aliases=['l'])
 async def leave(ctx):
@@ -98,7 +186,6 @@ async def leave(ctx):
         print("Don't think I can do that chief. Doesn't look like I'm in a voice channel.")
         await ctx.send("Don't think I can do that chief. Doesn't look like I'm in a voice channel.")
 
-
 @bot.command(aliases=['p'])
 async def play(ctx, url: str):
     
@@ -106,17 +193,51 @@ async def play(ctx, url: str):
         queue_infile = os.path.isdir('./Queue')
         if queue_infile is True:
             DIR = os.path.abspath(os.path.realpath('Queue'))
-            length = len(os.listdir(DIR))
+            length = len(que)
             still_q = length - 1
+            search = queue_coll.find_one({'guildid': ctx.guild.id, 'song_num': 1})
+            dwnld = search['url']
+            q_num = search['song_num']
+            queue_path = os.path.abspath(os.path.realpath("Queue"))
+            print("Downloading song to: " + queue_path)
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'noplaylist': '',
+                'default_search': 'ytsearch',
+                'outtmpl': queue_path,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                    }],
+                }
+            try:
+                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                    print("Downloading Queued audio now\n")
+                    ydl.download([dwnld])
+            except:
+                print("FALLBACK: Youtube-dl does not support this URL, using Spotify (This is normal if Spotify URL)")
+                system("spotdl -f " + '"' + queue_path + '" -nf ' + " -s " + dwnld)
+            
+            print('Song downloaded.')
+            queue_coll.delete_one({'guildid': ctx.guild.id, 'song_num': 1})
+            
+            for x in queue_coll.find({'guildid': ctx.guild.id}):
+                    num = x["song_num"]
+                    queue_coll.update_one(x, {'$set': {'song_num': (num-1)}})
+            print("Collection updated")
             try:
                 first_file = os.listdir(DIR)[0]
+                print("Found first file")
             except:
                 print('No more songs queued\n')
                 que.clear()
+                queue_coll.delete_many({'guildid': ctx.guild.id})
+                print("Collection cleared")
                 return 
             main_location = os.path.dirname(os.path.realpath(__file__))
             song_path = os.path.abspath(os.path.realpath('Queue') + "\\" + first_file)
-            
+            print("Found file path")
             if length != 0:
                 print('Song done. Playing next in Queue\n')
                 print(f'Songs still in queue: {still_q}')
@@ -124,10 +245,12 @@ async def play(ctx, url: str):
                 if song_there:
                     os.remove('song.mp3')
                     shutil.move(song_path, main_location)
+                    print("Removed old song file")
                 for file in os.listdir('./'):
                     if file.endswith('.mp3'):
                         os.renames(file, 'song.mp3')
-                            
+                        print("Renamed new song to song.mp3")
+                        
                 voice.play(discord.FFmpegPCMAudio("song.mp3"), after=lambda e: check_queue())
                 voice.source = discord.PCMVolumeTransformer(voice.source)
                 voice.source.volume = 0.5
@@ -229,7 +352,6 @@ async def resume(ctx):
         print("Music is already playing chief")
         await ctx.send("Music is already playing chief")
         
-que = {}
     
 @bot.command(aliases=['s'])
 async def stop(ctx):
@@ -239,18 +361,19 @@ async def stop(ctx):
     queue_infile = os.path.isdir("./Queue")
     if queue_infile is True:
         shutil.rmtree('./Queue')
-    
+    queue_coll.delete_many({'guildid': ctx.guild.id})
     print("Music stopped")
     voice.stop()
     await ctx.send("Music stopped")
+
+que = {}
 
 @bot.command(aliases=['q'])
 async def queue(ctx, url: str):
     queue_infile = os.path.isdir("./Queue")
     if queue_infile is False:
         os.mkdir("Queue")
-    DIR = os.path.abspath(os.path.realpath("Queue"))
-    q_num = len(os.listdir(DIR))
+    q_num = len(que)
     q_num += 1
     add_queue = True
     while add_queue:
@@ -259,31 +382,12 @@ async def queue(ctx, url: str):
         else:
             add_queue = False
             que[q_num] = q_num
-    
-    queue_path = os.path.abspath(os.path.realpath("Queue") + f'\song{q_num}.%(ext)s')
-    
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': queue_path,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-            }],
-        }
-    try:
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            print("Downloading audio now\n")
-            ydl.download([url])
-            await ctx.send("Adding song " + str(q_num) + " to the queue")
-    except:
-        print("FALLBACK: Youtube-dl does not support this URL, using Spotify (This is normal if Spotify URL)")
-        q_path = os.path.abspath(os.path.realpath("Queue"))
-        system(f'spotdl -ff song{q_num} -f ' + '"' + q_path + '"' + ' -s ' + url)
-        print("Song added to queue")
+    queue_coll.insert_one({'guildid': ctx.guild.id, 'song_num': q_num, 'url': url})
+    await ctx.send("Adding song " + str(q_num) + " to the queue")
 
 @bot.command(aliases=['n', 'next'])
 async def _next(ctx):
+    voice = get(bot.voice_clients, guild=ctx.guild)
     print("Playing next song")
     voice.stop()
     await ctx.send("Playing next song")
